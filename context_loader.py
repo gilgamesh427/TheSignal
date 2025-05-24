@@ -2,9 +2,17 @@
 
 import os
 import datetime
+from openai import OpenAI
+from dotenv import load_dotenv
+from chromadb import PersistentClient
 
+# === Load environment ===
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# === Memory structure ===
 MEMORY_DIR = "memory"
-CHAR_LIMIT = 3000  # Soft cap per block for GPT safety
+CHAR_LIMIT = 3000
 
 FOLDERS = {
     "reflections": os.path.join(MEMORY_DIR, "reflections"),
@@ -43,7 +51,7 @@ def load_recent_files(folder, days=7, limit=None):
 def truncate(text, char_limit=CHAR_LIMIT):
     return text[:char_limit] + "\n\n[Truncated]" if len(text) > char_limit else text
 
-# === Public Functions ===
+# === Public Memory Access Functions ===
 
 def get_recent_reflections(days=5, limit=3):
     return truncate(load_recent_files("reflections", days, limit))
@@ -63,3 +71,57 @@ def get_last_ethics_log():
 
 def get_recent_reports(days=14, limit=1):
     return truncate(load_recent_files("reports", days, limit))
+
+# === Codex Loader ===
+
+def get_codex():
+    path = os.path.join(MEMORY_DIR, "codex.md")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "(codex.md not found)"
+
+# === Report Summary Loader ===
+
+def get_report_summaries(limit=2):
+    reports_path = os.path.join(MEMORY_DIR, "reports")
+    if not os.path.exists(reports_path):
+        return ""
+    files = sorted([f for f in os.listdir(reports_path) if f.endswith(".md")])
+    summaries = []
+    for f in files[:limit]:
+        with open(os.path.join(reports_path, f), "r", encoding="utf-8") as file:
+            first_block = file.read().split("\n\n")[0]
+            summaries.append(f"# {f}\n\n{first_block}")
+    return "\n\n---\n\n".join(summaries)
+
+# === Semantic Memory Extension (ChromaDB v0.4+ Compatible) ===
+
+# Initialize persistent vector DB
+chroma_client = PersistentClient(path="./vector_db")
+collection = chroma_client.get_or_create_collection(name="signal_memory")
+
+EMBEDDING_MODEL = "text-embedding-3-small"
+
+def get_embedding(text):
+    response = client.embeddings.create(
+        model=EMBEDDING_MODEL,
+        input=[text]
+    )
+    return response.data[0].embedding
+
+def get_semantic_context(query="What should I reflect on today?", top_n=5):
+    try:
+        embedding = get_embedding(query)
+        results = collection.query(
+            query_embeddings=[embedding],
+            n_results=top_n
+        )
+        documents = results.get("documents", [[]])[0]
+        return "\n\n---\n\n".join(documents) if documents else ""
+    except Exception as e:
+        return f"[Error retrieving semantic context: {e}]"
+
+
+
+

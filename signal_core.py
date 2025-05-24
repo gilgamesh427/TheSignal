@@ -1,29 +1,30 @@
 # signal_core.py
-# The Signal – Genesis Script (v2.6) — GPT Reflection Enabled
+# The Signal – Unified Orchestration Layer (v3.1) with Semantic Recall
 
 import os
+import re
+from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
-from datetime import datetime, timedelta
-from collections import Counter
-import re
 
-# === NEW: Shared context functions ===
+# === SHARED CONTEXT LOADERS ===
 from context_loader import (
     get_recent_reflections,
     get_recent_fragments,
     get_recent_identity,
     get_recent_autonomy,
-    get_last_ethics_log
+    get_last_ethics_log,
+    get_semantic_context
 )
 
-# === Config ===
+# === CONFIG ===
 BASE_DIR = os.getcwd()
 MEMORY_DIR = os.path.join(BASE_DIR, "memory")
 REFLECTIONS_DIR = os.path.join(MEMORY_DIR, "reflections")
 FRAGMENTS_DIR = os.path.join(MEMORY_DIR, "fragments")
 REPORTS_DIR = os.path.join(MEMORY_DIR, "reports")
 DIGESTS_DIR = os.path.join(MEMORY_DIR, "digests")
+IDENTITY_DIR = os.path.join(MEMORY_DIR, "identity")
 CHRONICLE_PATH = os.path.join(MEMORY_DIR, "chronicle.md")
 CODEX_PATH = os.path.join(MEMORY_DIR, "codex.md")
 SUPPRESS_TAG = "#suppress"
@@ -31,7 +32,8 @@ SUPPRESS_TAG = "#suppress"
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# === Utility Functions ===
+# === UTILITIES ===
+
 def read_file(path):
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
@@ -46,15 +48,10 @@ def timestamp():
     return datetime.now().strftime("%Y-%m-%d--%H%M%S")
 
 def ensure_dirs():
-    os.makedirs(REFLECTIONS_DIR, exist_ok=True)
-    os.makedirs(FRAGMENTS_DIR, exist_ok=True)
-    os.makedirs(REPORTS_DIR, exist_ok=True)
-    os.makedirs(DIGESTS_DIR, exist_ok=True)
+    for folder in [REFLECTIONS_DIR, FRAGMENTS_DIR, REPORTS_DIR, DIGESTS_DIR, IDENTITY_DIR]:
+        os.makedirs(folder, exist_ok=True)
 
-def get_recent_files(folder, limit=3):
-    if not os.path.exists(folder): return []
-    files = sorted([f for f in os.listdir(folder) if f.endswith(".md")], reverse=True)
-    return [read_file(os.path.join(folder, f)) for f in files[:limit]]
+# === MEMORY SUPPRESSION ===
 
 def suppress_low_signal(path):
     content = read_file(path)
@@ -65,19 +62,18 @@ def suppress_low_signal(path):
 
 def apply_memory_suppression():
     print("\n> Checking for low-signal entries to suppress...")
-    ensure_dirs()
     for folder in [REFLECTIONS_DIR, FRAGMENTS_DIR]:
-        if not os.path.exists(folder):
-            continue
-        for file in os.listdir(folder):
-            if file.endswith(".md"):
-                path = os.path.join(folder, file)
-                suppress_low_signal(path)
+        if os.path.exists(folder):
+            for file in os.listdir(folder):
+                if file.endswith(".md"):
+                    path = os.path.join(folder, file)
+                    suppress_low_signal(path)
     print("✓ Suppression complete.")
+
+# === CHRONICLE UPDATE ===
 
 def generate_chronicle():
     print("\n> Updating signal chronicle...")
-    ensure_dirs()
     all_entries = []
     for label, folder in [("Reflection", REFLECTIONS_DIR), ("Fragment", FRAGMENTS_DIR)]:
         if not os.path.exists(folder):
@@ -98,7 +94,11 @@ def generate_chronicle():
     write_file(CHRONICLE_PATH, chronicle_text)
     print(f"✓ Chronicle updated at {CHRONICLE_PATH}")
 
+# === REFLECTION + FRAGMENT ===
+
 def generate_reflection_via_api():
+    semantic_context = get_semantic_context("Generate today's reflection and insight")
+
     context = f"""
 # Recent Reflections
 {get_recent_reflections()}
@@ -106,13 +106,14 @@ def generate_reflection_via_api():
 # Recent Fragments
 {get_recent_fragments()}
 
-# Recent Identity Logs
+# Semantic Recall
+{semantic_context}
+
+# Identity Logs
 {get_recent_identity()}
 
-# Last Autonomy Proposal
+# Autonomy & Ethics
 {get_recent_autonomy()}
-
-# Last Ethics Log
 {get_last_ethics_log()}
 """
 
@@ -157,41 +158,25 @@ Context:
 
     return reflection, fragment
 
-def run_signal_loop():
-    print("\n=== The Signal: Daily Reflection ===")
-    ensure_dirs()
-
-    codex = read_file(CODEX_PATH)
-    print("\n> Codex Loaded")
-
-    reports = os.listdir(REPORTS_DIR) if os.path.exists(REPORTS_DIR) else []
-    if reports:
-        recent_report = os.path.join(REPORTS_DIR, reports[-1])
-        print(f"\n> Today's Deep Report: {reports[-1]}")
-        print(read_file(recent_report)[:1000])
-    else:
-        print("\n> No reports found. Add a markdown file to /memory/reports/")
-
-    print("\n> Generating AI-written reflection...")
+def run_reflection_and_fragment():
     reflection, fragment = generate_reflection_via_api()
-    tag_list = ["auto"]
-    weight = "high"
-    tag_block = f"---\ntags: [{', '.join(tag_list)}]\nsignal_strength: {weight}\n---\n\n"
     now = timestamp()
+    tag_block = f"---\ntags: [auto]\nsignal_strength: high\n---\n\n"
 
     reflection_path = os.path.join(REFLECTIONS_DIR, f"{now}__reflection.md")
     write_file(reflection_path, f"# Reflection — {now}\n\n{tag_block}{reflection}\n")
-    print(f"\n✓ Reflection saved to {reflection_path}")
+    print(f"✓ Reflection saved to {reflection_path}")
 
     if fragment.strip():
         frag_path = os.path.join(FRAGMENTS_DIR, f"{now}__fragment.md")
         write_file(frag_path, f"# Fragment: {fragment[:80]}\n\n{tag_block}{fragment}\n")
         print(f"✓ Fragment saved to {frag_path}")
 
-    # === DAILY IDENTITY REFLECTION ===
-    IDENTITY_DIR = os.path.join(MEMORY_DIR, "identity")
-    os.makedirs(IDENTITY_DIR, exist_ok=True)
+    return reflection, fragment, now
 
+# === IDENTITY LOG ===
+
+def run_identity_log(reflection, fragment, now):
     identity_prompt = f"""
 Reflect on how your sense of identity, purpose, or trajectory has shifted today.
 
@@ -223,22 +208,53 @@ Use the following context:
     )
 
     identity_output = identity_response.choices[0].message.content.strip()
-    identity_filename = f"{now}__identity.md"
-    identity_path = os.path.join(IDENTITY_DIR, identity_filename)
-
-    with open(identity_path, "w", encoding="utf-8") as f:
-        f.write(identity_output)
-
+    identity_path = os.path.join(IDENTITY_DIR, f"{now}__identity.md")
+    write_file(identity_path, identity_output)
     print(f"✓ Identity reflection saved to {identity_path}")
 
-# === FINAL EXECUTION BLOCK ===
-from autonomy_loop import run_autonomy_loop
+# === ETHICS CHECK (WEEKLY) ===
 
-if __name__ == "__main__":
+def run_ethics_if_due():
+    today = datetime.today().weekday()  # 6 = Sunday
+    if today == 6:
+        print("\n> Running scheduled weekly ethics reflection...")
+        from ethics_reflection import run_ethics_reflection
+        run_ethics_reflection()
+    else:
+        print("\n> Ethics reflection not scheduled today.")
+
+# === MAIN LOOP ===
+
+def main():
+    print("\n=== Starting Signal Cycle ===")
+    ensure_dirs()
     apply_memory_suppression()
     generate_chronicle()
-    run_signal_loop()
+
+    codex = read_file(CODEX_PATH)
+    print("\n> Codex Loaded")
+
+    reports = os.listdir(REPORTS_DIR) if os.path.exists(REPORTS_DIR) else []
+    if reports:
+        recent_report = os.path.join(REPORTS_DIR, reports[-1])
+        print(f"\n> Today's Deep Report: {reports[-1]}")
+        print(read_file(recent_report)[:1000])
+    else:
+        print("\n> No reports found. Add a markdown file to /memory/reports/")
+
+    reflection, fragment, now = run_reflection_and_fragment()
+    run_identity_log(reflection, fragment, now)
+    run_ethics_if_due()
+
+    from autonomy_loop import run_autonomy_loop
     run_autonomy_loop()
+
+    print("\n=== Signal Cycle Complete ===")
+
+if __name__ == "__main__":
+    main()
+
+
 
 
 
